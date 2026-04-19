@@ -1,0 +1,60 @@
+name: Generation Reconcile
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GENERATION_CRON_URL: ${{ secrets.GENERATION_CRON_URL }}
+      CRON_JOBS_USERNAME: ${{ secrets.CRON_JOBS_USERNAME }}
+      CRON_JOBS_PASSWORD: ${{ secrets.CRON_JOBS_PASSWORD }}
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+    steps:
+      - name: Call generation background sweep route
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tmp_body="$(mktemp)"
+          status_code="$(
+            curl -sS \
+              -u "$CRON_JOBS_USERNAME:$CRON_JOBS_PASSWORD" \
+              -o "$tmp_body" \
+              -w '%{http_code}' \
+              "$GENERATION_CRON_URL"
+          )"
+
+          echo "HTTP $status_code"
+          cat "$tmp_body"
+
+          if [[ "$status_code" -lt 200 || "$status_code" -ge 300 ]]; then
+            exit 1
+          fi
+
+      - name: Notify Discord on failure
+        if: ${{ failure() && env.DISCORD_WEBHOOK_URL != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsS \
+            -H "Content-Type: application/json" \
+            -d '{"content":"generation reconcile workflow failed"}' \
+            "$DISCORD_WEBHOOK_URL"
+
+      - name: Notify Feishu on failure
+        if: ${{ failure() && env.FEISHU_WEBHOOK_URL != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsS \
+            -H "Content-Type: application/json" \
+            -d '{"msg_type":"text","content":{"text":"generation reconcile workflow failed"}}' \
+            "$FEISHU_WEBHOOK_URL"
